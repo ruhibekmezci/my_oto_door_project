@@ -2,55 +2,87 @@
 #include <Servo.h>
 #include <SPI.h>
 
+// Pinleri define ile tanımlıyoruz, RAM'den tasarruf sağlar.
+#define RST_PIN 9
+#define SS_PIN 10
+#define SERVO_PIN 8
 
-int RST_PIN = 9;                          //RC522 modülü reset pinini tanımlıyoruz.
-int SS_PIN = 10;                          //RC522 modülü chip select pinini tanımlıyoruz.
-int servoPin = 8;                         //Servo motor pinini tanımlıyoruz.
+// Sabitler
+const byte YETKILI_ID[4] = {142, 111, 230, 63}; // Yetkili kart ID'si
+const unsigned long KAPI_ACIK_SURESI = 3000;    // Kapının açık kalacağı süre (ms)
 
-//142 111 230 63 = mavi anahtar id
-//65 42 189 26 = beyaz anahtar id
-
-Servo motor;                              //Servo motor için değişken oluşturuyoruz.
-MFRC522 rfid(SS_PIN, RST_PIN);            //RC522 modülü ayarlarını yapıyoruz.
-byte ID[4] = {142,111,230,63};          //Yetkili kart ID'sini tanımlıyoruz.
+// Global Değişkenler
+Servo motor;
+MFRC522 rfid(SS_PIN, RST_PIN);
+unsigned long sonIslemZamani = 0;
+bool kapiAcik = false;
 
 void setup() {
-  motor.attach(servoPin);                 //Servo motor pinini motor değişkeni ile ilişkilendiriyoruz.
-  Serial.begin(9600);                     //Seri haberleşmeyi başlatıyoruz.
-  SPI.begin();                            //SPI iletişimini başlatıyoruz.
-  rfid.PCD_Init();                        //RC522 modülünü başlatıyoruz.
+  motor.attach(SERVO_PIN);
+  motor.write(0); // Başlangıçta kapıyı kilitli pozisyona al
+  
+  Serial.begin(9600);
+  SPI.begin();
+  rfid.PCD_Init();
+  
+  Serial.println(F("Sistem Hazir. Kart Okutunuz...")); // F() makrosu string'i flash bellekte tutar
 }
 
 void loop() {
-
-  if ( ! rfid.PICC_IsNewCardPresent())    //Yeni kartın okunmasını bekliyoruz.
-    return;
-
-  if ( ! rfid.PICC_ReadCardSerial())      //Kart okunmadığı zaman bekliyoruz.
-    return;
-
-  if (rfid.uid.uidByte[0] == ID[0] &&     //Okunan kart ID'si ile ID değişkenini karşılaştırıyoruz.
-      rfid.uid.uidByte[1] == ID[1] &&
-      rfid.uid.uidByte[2] == ID[2] &&
-      rfid.uid.uidByte[3] == ID[3] ) {
-    Serial.println("Kapi acildi");
-    ekranaYazdir();
-    motor.write(180);                 //Servo motoru 180 dereceye getiriyoruz.
-    delay(3000);
-    motor.write(0);                   //Servo motoru 0 dereceye getiriyoruz.
-    delay(1000);
+  // Zamanlayıcı kontrolü (Non-blocking delay mantığı)
+  if (kapiAcik && (millis() - sonIslemZamani >= KAPI_ACIK_SURESI)) {
+    kapiyiKapat();
   }
-  else {                                //Yetkisiz girişte içerideki komutlar çalıştırılır.
-    Serial.println("Yetkisiz Kart");
-    ekranaYazdir();
+
+  // Yeni kart var mı ve okunabiliyor mu kontrolü
+  if (!rfid.PICC_IsNewCardPresent() || !rfid.PICC_ReadCardSerial()) {
+    return;
   }
-  rfid.PICC_HaltA();
+
+  // ID Kontrolü
+  if (idKontrol(rfid.uid.uidByte)) {
+    Serial.println(F("Giris Onaylandi."));
+    kapiyiAc();
+  } else {
+    Serial.println(F("Yetkisiz Giris Denemesi!"));
+    ekranaYazdir(); // Hangi ID'nin reddedildiğini görelim
+  }
+
+  rfid.PICC_HaltA();        // Kartı durdur
+  rfid.PCD_StopCrypto1();   // Kriptoyu durdur
 }
+
+// ID Karşılaştırma Fonksiyonu
+bool idKontrol(byte* okunanID) {
+  for (byte i = 0; i < 4; i++) {
+    if (okunanID[i] != YETKILI_ID[i]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+void kapiyiAc() {
+  // Kapı zaten açıksa sadece süreyi sıfırla (uzat)
+  if (!kapiAcik) {
+    motor.write(180);
+    Serial.println(F("Kapi Acildi."));
+    kapiAcik = true;
+  }
+  sonIslemZamani = millis(); // Sayacı başlat/sıfırla
+}
+
+void kapiyiKapat() {
+  motor.write(0);
+  Serial.println(F("Sure Doldu, Kapi Kapatildi."));
+  kapiAcik = false;
+}
+
 void ekranaYazdir() {
-  Serial.print("ID Numarasi: ");
-  for (int sayac = 0; sayac < 4; sayac++) {
-    Serial.print(rfid.uid.uidByte[sayac]);
+  Serial.print("Okunan ID: ");
+  for (int i = 0; i < 4; i++) {
+    Serial.print(rfid.uid.uidByte[i]);
     Serial.print(" ");
   }
-  Serial.println("");
+  Serial.println();
 }
