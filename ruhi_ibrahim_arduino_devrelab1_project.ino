@@ -54,6 +54,11 @@ void loop() {
 
 // ID Karşılaştırma Fonksiyonu
 bool idKontrol(byte* okunanID) {
+  // Kart ID uzunluğu yetkili ID uzunluğu ile aynı olmalı
+  if (rfid.uid.size != sizeof(YETKILI_ID)) {
+    return false;
+  }
+
   for (byte i = 0; i < 4; i++) {
     if (okunanID[i] != YETKILI_ID[i]) {
       return false;
